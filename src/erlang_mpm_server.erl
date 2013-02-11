@@ -140,21 +140,14 @@ handle_cast({result,Pid,Result}, State) ->
 			% Send result
 			LastJob=Worker#worker.lastJob,
 			gen_server:reply(LastJob#job.from, Result),
-			CleanWorker=Worker#worker{jobCount=Worker#worker.jobCount+1,
-					lastJob=nil},
-			% Standard movement
-			NewState=State#state{busyWorkers=NewList,
-				readyWorkers=[CleanWorker| State#state.readyWorkers] },
-			{noreply, manageWorkers(trySchedule(NewState))}
+			handleFinishedJob(Worker, NewList, State)
 	end;
 handle_cast({report,finished,Pid}, State) ->
 	case lists:keytake(Pid, #worker.pid, State#state.busyWorkers) of
 		false ->
 			throw({pidNotInQueue,Pid});
 		{value, Worker, NewList} ->
-			NewState=State#state{busyWorkers=NewList,
-				readyWorkers=[Worker| State#state.readyWorkers] },
-			{noreply, manageWorkers(trySchedule(NewState))}
+			handleFinishedJob(Worker, NewList, State)
 	end;
 handle_cast({report,ready,Pid}, State) ->
 	case lists:keytake(Pid, #worker.pid, State#state.startingWorkers) of
@@ -264,6 +257,21 @@ startWorker(State) ->
 	NewWorker=#worker{pid=Pid},
 	State#state{startedWorkers=[NewWorker|State#state.startedWorkers]}.
 
+handleFinishedJob(Worker, NewList, State) ->
+	CleanWorker=Worker#worker{jobCount=Worker#worker.jobCount+1,
+			lastJob=nil},
+	if
+		State#state.maxTaskPerWorker ==0 ;
+		State#state.maxTaskPerWorker > CleanWorker#worker.jobCount ->
+			NewState=State#state{busyWorkers=NewList,
+				readyWorkers=[CleanWorker| State#state.readyWorkers] },
+			{noreply, manageWorkers(trySchedule(NewState))};
+		true ->
+			erlang_mpm_worker:stop(CleanWorker#worker.pid),
+			NewState=State#state{busyWorkers=NewList,
+				stoppingWorkers=[CleanWorker| State#state.stoppingWorkers] },
+			{noreply, manageWorkers(trySchedule(NewState))}
+	end.
 
 
 %% vim: set ts=2 sw=2 ai invlist si cul nu:	

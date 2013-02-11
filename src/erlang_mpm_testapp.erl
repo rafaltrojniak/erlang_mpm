@@ -23,7 +23,7 @@ start_sup() ->
 		{minSpareWorkers, 3},
 		{maxSpareWorkers, 5},
 		{maxWorkers, 30},
-		{maxTaskPerWorker, 0},
+		{maxTaskPerWorker, 10},
 		{register,?SERVER}
 	],
 	erlang_mpm_sup:start_link(?MODULE,Options).
