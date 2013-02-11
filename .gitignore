@@ -1,0 +1,6 @@
+*.swp
+*.swo
+*~
+erl_crash.dump
+log/*
+ebin/*
