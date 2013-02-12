@@ -23,6 +23,7 @@ start_sup() ->
 		{minSpareWorkers, 3},
 		{maxSpareWorkers, 5},
 		{maxWorkers, 30},
+		{maxReschedule, 2},
 		{maxTaskPerWorker, 10},
 		{register,?SERVER}
 	],
@@ -45,12 +46,51 @@ terminate(_State)->
 	timer:sleep(1000),
 	io:format("~p finishing termination\n",[self()]),
 	ok.
+
+process_event(_State, Job) when Job == arith->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	X=0,
+	Ret=10/X,
+	io:format("~p finishing event ~p\n",[self(),Job]),
+	{error,Ret};
+process_event(_State, Job) when Job == undef->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	undefModule:throw(fail),
+	io:format("~p finishing event ~p\n",[self(),Job]);
+process_event(_State, Job) when Job == throw->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	throw(fail),
+	io:format("~p finishing event ~p\n",[self(),Job]);
+process_event(State, Job) when Job == error->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	timer:sleep(1000),
+	io:format("~p finishing event ~p\n",[self(),Job]),
+	{error,State};
 process_event(State, Job)->
 	io:format("~p starting event ~p\n",[self(),Job]),
 	timer:sleep(1000),
 	io:format("~p finishing event ~p\n",[self(),Job]),
 	{ok,State}.
 
+process_call(_State, Job) when Job == arith->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	X=0,
+	Ret=10/X,
+	io:format("~p finishing event ~p\n",[self(),Job]),
+	{error,Ret};
+process_call(_State, Job) when Job == undef->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	undefModule:throw(fail),
+	io:format("~p finishing event ~p\n",[self(),Job]);
+process_call(_State, Job) when Job == throw->
+	io:format("~p starting event ~p\n",[self(),Job]),
+	throw(fail),
+	io:format("~p finishing event ~p\n",[self(),Job]);
+process_call(State, Job) when Job == error ->
+	io:format("~p starting call ~p\n",[self(),Job]),
+	timer:sleep(1000),
+	io:format("~p finishing call ~p\n",[self(),Job]),
+	{error,[],State};
 process_call(State, Job)->
 	io:format("~p starting call ~p\n",[self(),Job]),
 	timer:sleep(1000),

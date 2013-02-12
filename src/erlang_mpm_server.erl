@@ -11,7 +11,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/2, call/2, call/3, submit/2, report/2, send_result/2]).
+-export([start_link/2, call/2, call/3, submit/2, report/2, send_result/3, report_crash/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -25,6 +25,7 @@
 		maxSpareWorkers,
 		maxWorkers,
 		maxTaskPerWorker,
+		maxReschedule,
 		supervisor,
 		queueMod,
 		startedWorkers=[],
@@ -39,6 +40,7 @@
 		task,
 		from=nil,
 		callTime=nil,
+		scheduled=0,
 		timeout=nil
 	}).
 
@@ -77,8 +79,11 @@ report(Pid,ready)->
 report(Pid,finished)->
 	gen_server:cast(Pid,{report,finished,self()}).
 
-send_result(Pid,Result)->
-	gen_server:cast(Pid,{result,self(),Result}).
+report_crash(Pid,Reason)->
+	gen_server:cast(Pid,{report,crashed,self(), Reason}).
+
+send_result(State, Pid,Result)->
+	gen_server:cast(Pid,{result,self(),State, Result}).
 
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 start_link(Supervisor, Options) ->
@@ -104,12 +109,14 @@ init([Supervisor, Options]) ->
 	MinSpareWorkers = proplists:get_value(minSpareWorkers, Options, 0),
 	MaxSpareWorkers = proplists:get_value(maxSpareWorkers, Options, 1),
 	MaxWorkers = proplists:get_value(maxWorkers, Options, 1),
+	MaxReschedule = proplists:get_value(maxReschedule, Options, 0),
 	MaxTaskPerWorker = proplists:get_value(maxTaskPerWorker, Options, 0),
 	gen_server:cast(self(),init),
 	{ok, #state{supervisor=Supervisor,
 		startWorkers=StartWorkers, maxWorkers=MaxWorkers,
 		minSpareWorkers=MinSpareWorkers, maxSpareWorkers=MaxSpareWorkers,
 		maxTaskPerWorker=MaxTaskPerWorker,
+		maxReschedule=MaxReschedule,
 		queue=Queue, queueMod=QueueModule
 		}}.
 
@@ -132,15 +139,53 @@ handle_call({new_call, Task, CallTime, Timeout}, From, State) ->
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
 %%
-handle_cast({result,Pid,Result}, State) ->
+handle_cast({report,crashed,Pid, Reason}, State) ->
+	case lists:keytake(Pid, #worker.pid, State#state.busyWorkers) of
+		false ->
+			StartedWorkers=
+				lists:keydelete(Pid,#worker.pid, State#state.startedWorkers),
+			StartingWorkers=
+				lists:keydelete(Pid,#worker.pid, State#state.startingWorkers),
+			ReadyWorkers=
+				lists:keydelete(Pid,#worker.pid, State#state.readyWorkers),
+			StoppingWorkers=
+				lists:keydelete(Pid,#worker.pid, State#state.stoppingWorkers),
+			NewState=State#state{ 
+				startedWorkers=StartedWorkers,
+				startingWorkers=StartingWorkers,
+				readyWorkers=ReadyWorkers,
+				stoppingWorkers=StoppingWorkers};
+		{value, Worker, RemainingWorkers} ->
+			LastJob=Worker#worker.lastJob,
+			% Reschedule job
+			if 
+				LastJob#job.scheduled<State#state.maxReschedule ->
+					RescheduledJob=LastJob#job{scheduled=LastJob#job.scheduled+1},
+					QeueuMod=State#state.queueMod,
+					ModifiedQueue=QeueuMod:in_r(RescheduledJob,State#state.queue),
+					NewState=trySchedule(State#state{queue=ModifiedQueue});
+				true ->
+					gen_server:reply(LastJob#job.from, {error,Reason}),
+					NewState=State#state{busyWorkers=RemainingWorkers}
+			end
+	end,
+	{noreply, manageWorkers(NewState)};
+handle_cast({result, Pid, RetStatus, Result}, State) ->
 	case lists:keytake(Pid, #worker.pid, State#state.busyWorkers) of
 		false ->
 			throw({pidNotInQueue,Pid});
 		{value, Worker, NewList} ->
 			% Send result
 			LastJob=Worker#worker.lastJob,
-			gen_server:reply(LastJob#job.from, Result),
-			handleFinishedJob(Worker, NewList, State)
+			case RetStatus of 
+				ok ->
+					gen_server:reply(LastJob#job.from, {ok,Result}),
+					handleFinishedJob(Worker, NewList, State);
+				error ->
+					% TODO reschedule
+					gen_server:reply(LastJob#job.from, {error,Result}),
+					handleFinishedJob(Worker, NewList, State)
+			end
 	end;
 handle_cast({report,finished,Pid}, State) ->
 	case lists:keytake(Pid, #worker.pid, State#state.busyWorkers) of

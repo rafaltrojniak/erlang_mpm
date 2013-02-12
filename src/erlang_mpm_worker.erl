@@ -71,20 +71,6 @@ starting(timeout, State) ->
 		error:Reason -> {stop,{error,{Reason,erlang:get_stacktrace()}},State}
 	end.
 
-ready({job_call, Job}, State) ->
-	Module=State#state.localModule,
-	try
-		case Module:process_call(State#state.workerState,Job) of
-			{ok,Result,NewWorkerState} ->
-				erlang_mpm_server:send_result(State#state.master,Result),
-				{next_state, ready, State#state{workerState=NewWorkerState}}
-				%TODO Other return codes
-		end
-	catch
-		throw:Term -> {stop,{throw,Term},State};
-		exit:Reason -> {stop,{exit,Reason},State};
-		error:Reason -> {stop,{error,{Reason,erlang:get_stacktrace()}},State}
-	end;
 ready(stop, State) ->
 	Module=State#state.localModule,
 	try
@@ -98,13 +84,33 @@ ready(stop, State) ->
 		exit:Reason -> {stop,{exit,Reason},State};
 		error:Reason -> {stop,{error,{Reason,erlang:get_stacktrace()}},State}
 	end;
+ready({job_call, Job}, State) ->
+	Module=State#state.localModule,
+	try
+		case Module:process_call(State#state.workerState,Job) of
+			{ok,Result,NewWorkerState} ->
+				erlang_mpm_server:send_result(ok, State#state.master,Result),
+				{next_state, ready, State#state{workerState=NewWorkerState}};
+			{error,Result,NewWorkerState} ->
+				erlang_mpm_server:send_result(error, State#state.master,Result),
+				{next_state, ready, State#state{workerState=NewWorkerState}};
+			Other ->
+				{stop,{badRet,Other},State}
+		end
+	catch
+		throw:Term -> {stop,{throw,Term},State};
+		exit:Reason -> {stop,{exit,Reason},State};
+		error:Reason -> {stop,{error,{Reason,erlang:get_stacktrace()}},State}
+	end;
 ready({job_event, Job}, State) ->
 	Module=State#state.localModule,
 	try
 		case Module:process_event(State#state.workerState,Job) of
 			{ok,NewWorkerState} ->
 				erlang_mpm_server:report(State#state.master,finished),
-				{next_state, ready, State#state{workerState=NewWorkerState}}
+				{next_state, ready, State#state{workerState=NewWorkerState}};
+			Other ->
+				{stop,{badRet,Other},State}
 		end
 	catch
 		throw:Term -> {stop,{throw,Term},State};
@@ -150,7 +156,8 @@ handle_info({'EXIT',_From, Reason}, _StateName, State) ->
 	{stop, Reason, State}.
 
 %% @spec terminate(Reason, StateName, State) -> void()
-terminate(_Reason, _StateName, _State) ->
+terminate(Reason, _StateName, State) ->
+		erlang_mpm_server:report_crash(State#state.master, Reason),
 	ok.
 
 %% @spec code_change(OldVsn, StateName, State, Extra) ->
