@@ -21,7 +21,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	terminate/2, code_change/3]).
 
--define(SERVER, ?MODULE). 
+-define(SERVER, ?MODULE).
 
 -record(state, {
 		% Options
@@ -96,7 +96,6 @@ send_result(State, Pid,Result)->
 
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 start_link(Supervisor, Options) ->
-	%TODO remove registration
 	case proplists:get_value(register,Options,undefined) of
 		undefined ->
 			gen_server:start_link(?MODULE, [Supervisor, Options], []);
@@ -112,20 +111,23 @@ start_link(Supervisor, Options) ->
 %%                     {stop, Reason}
 init([Supervisor, Options]) ->
 	process_flag(trap_exit, true),
-	QueueModule=queue,
-	Queue=QueueModule:new(),
+	QueueModule = proplists:get_value(queueModule, Options, queue),
 	StartWorkers = proplists:get_value(startWorkers, Options, 1),
 	MinSpareWorkers = proplists:get_value(minSpareWorkers, Options, 0),
 	MaxSpareWorkers = proplists:get_value(maxSpareWorkers, Options, 1),
 	MaxWorkers = proplists:get_value(maxWorkers, Options, 1),
 	MaxReschedule = proplists:get_value(maxReschedule, Options, 0),
 	MaxTaskPerWorker = proplists:get_value(maxTaskPerWorker, Options, 0),
+	Queue=QueueModule:new(),
 	gen_server:cast(self(),init),
-	{ok, #state{supervisor=Supervisor,
+	{ok, #state{
+		% Options
 		startWorkers=StartWorkers, maxWorkers=MaxWorkers,
 		minSpareWorkers=MinSpareWorkers, maxSpareWorkers=MaxSpareWorkers,
 		maxTaskPerWorker=MaxTaskPerWorker,
 		maxReschedule=MaxReschedule,
+		% Initial state
+		supervisor=Supervisor,
 		queue=Queue, queueMod=QueueModule
 		}}.
 
@@ -138,10 +140,9 @@ init([Supervisor, Options]) ->
 %%                                   {stop, Reason, State}
 handle_call({new_call, Task, CallTime, Timeout}, From, State) ->
 	QeueuMod=State#state.queueMod,
-	NewQueue=QeueuMod:in(#job{task=Task, from=From,
-			callTime=CallTime, timeout=Timeout},State#state.queue),
-	ScheduledState=trySchedule(State#state{queue=NewQueue}),
-	ManagedState=manageWorkers(ScheduledState),
+	NewJob=#job{task=Task, from=From, callTime=CallTime, timeout=Timeout},
+	NewQueue=QeueuMod:in(NewJob,State#state.queue),
+	ManagedState=manageWorkers(trySchedule(State#state{queue=NewQueue}),
 	{noreply, ManagedState}.
 
 %% @spec handle_cast(Msg, State) -> {noreply, State} |
@@ -159,7 +160,7 @@ handle_cast({report,crashed,Pid, Reason}, State) ->
 				lists:keydelete(Pid,#worker.pid, State#state.readyWorkers),
 			StoppingWorkers=
 				lists:keydelete(Pid,#worker.pid, State#state.stoppingWorkers),
-			NewState=State#state{ 
+			NewState=State#state{
 				startedWorkers=StartedWorkers,
 				startingWorkers=StartingWorkers,
 				readyWorkers=ReadyWorkers,
@@ -167,7 +168,7 @@ handle_cast({report,crashed,Pid, Reason}, State) ->
 		{value, Worker, RemainingWorkers} ->
 			LastJob=Worker#worker.lastJob,
 			% Reschedule job
-			if 
+			if
 				LastJob#job.scheduled<State#state.maxReschedule ->
 					RescheduledJob=LastJob#job{scheduled=LastJob#job.scheduled+1},
 					QeueuMod=State#state.queueMod,
@@ -186,7 +187,7 @@ handle_cast({result, Pid, RetStatus, Result}, State) ->
 		{value, Worker, NewList} ->
 			% Send result
 			LastJob=Worker#worker.lastJob,
-			case RetStatus of 
+			case RetStatus of
 				ok ->
 					gen_server:reply(LastJob#job.from, {ok,Result}),
 					handleFinishedJob(Worker, NewList, State);
@@ -217,7 +218,7 @@ handle_cast({report,starting,Pid}, State) ->
 		false ->
 			throw({pidNotInQueue,Pid});
 		{value, Worker, NewList} ->
-			{noreply, State#state{startedWorkers=NewList, 
+			{noreply, State#state{startedWorkers=NewList,
 					startingWorkers=[Worker| State#state.startingWorkers]
 				}
 			}
@@ -259,7 +260,7 @@ trySchedule(State) ->
 		true -> State;
 		false ->
 			case State#state.readyWorkers of
-				[] -> 
+				[] ->
 					State;
 				[Worker| ReadyWorkers] ->
 					{{value,Job},Queue}=QueueMod:out(State#state.queue),
@@ -312,8 +313,9 @@ startWorker(State) ->
 	State#state{startedWorkers=[NewWorker|State#state.startedWorkers]}.
 
 handleFinishedJob(Worker, NewList, State) ->
-	CleanWorker=Worker#worker{jobCount=Worker#worker.jobCount+1,
-			lastJob=nil},
+	CleanWorker=Worker#worker{
+		jobCount=Worker#worker.jobCount+1,
+		lastJob=nil},
 	if
 		State#state.maxTaskPerWorker ==0 ;
 		State#state.maxTaskPerWorker > CleanWorker#worker.jobCount ->
