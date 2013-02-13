@@ -11,7 +11,11 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/2, call/2, call/3, submit/2, report/2, send_result/3, report_crash/2]).
+%
+-export([start_link/2, send_call/2, send_call/3, send_event/2]).
+
+% Internal exports
+-export([report/2, send_result/3, report_crash/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -20,22 +24,26 @@
 -define(SERVER, ?MODULE). 
 
 -record(state, {
+		% Options
 		startWorkers,
 		minSpareWorkers,
 		maxSpareWorkers,
 		maxWorkers,
 		maxTaskPerWorker,
 		maxReschedule,
-		supervisor,
 		queueMod,
+		% Scoreboard
 		startedWorkers=[],
 		startingWorkers=[],
 		readyWorkers=[],
 		busyWorkers=[],
 		stoppingWorkers=[],
+		% State
+		supervisor,
 		queue
 	}).
 
+% Single job info
 -record(job, {
 		task,
 		from=nil,
@@ -44,6 +52,7 @@
 		timeout=nil
 	}).
 
+% Single worker info as added in scoreboard
 -record(worker, {
 		pid,
 		jobCount=0,
@@ -51,12 +60,12 @@
 		jobStarted=nil
 	}).
 
-call(Pid, Task)
+send_call(Pid, Task)
 	when is_pid(Pid) ;
 		is_atom(Pid) ->
-	call(Pid,Task,infinity).
+	send_call(Pid,Task,infinity).
 
-call(Pid, Task,  Timeout )
+send_call(Pid, Task,  Timeout )
 	when
 	is_pid(Pid) andalso is_integer(Timeout) ;
 	is_pid(Pid) andalso Timeout == infinity ;
@@ -66,7 +75,7 @@ call(Pid, Task,  Timeout )
 	Time=now(),
 	gen_server:call(Pid, {new_call, Task, Time,Timeout}, Timeout).
 
-submit(Pid, Task )
+send_event(Pid, Task )
 	when is_pid(Pid);
 		is_atom(Pid) ->
 	gen_server:cast(Pid, {new_cast, Task}).

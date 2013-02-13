@@ -9,7 +9,7 @@
 -module(erlang_mpm_testapp).
 
 %% API
--export([call_sync/1, call_async/1, start_sup/0]).
+-export([send_event/1, send_call/1, start_sup/0]).
 %% CallBacks
 -export([init/1, process_event/2, process_call/2, terminate/1]).
 
@@ -29,10 +29,10 @@ start_sup() ->
 	],
 	erlang_mpm_sup:start_link(?MODULE,Options).
 
-call_sync(Message) ->
-	erlang_mpm_server:call(?SERVER,Message).
-call_async(Message) ->
-	erlang_mpm_server:submit(?SERVER,Message).
+send_call(Message) ->
+	erlang_mpm_server:send_call(?SERVER,Message).
+send_event(Message) ->
+	erlang_mpm_server:send_event(?SERVER,Message).
 
 %% CallBacks
 init(_Options)->
