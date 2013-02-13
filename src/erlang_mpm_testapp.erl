@@ -17,6 +17,7 @@
 
 %%% API
 
+% Supervisor initiation - wrapper for erlang_mpm_sup:start_link with options set
 start_sup() ->
 	Options=[
 		{startWorkers, 3},
@@ -35,18 +36,25 @@ send_event(Message) ->
 	erlang_mpm_server:send_event(?SERVER,Message).
 
 %% CallBacks
+
+% Worker initiation function - prepares worker for functionning:
+% - Pre-compute pre-cache values
+% - Test/Make connections to needed resources
 init(_Options)->
 	io:format("~p starting initiation\n",[self()]),
 	timer:sleep(1000),
 	io:format("~p finishing initiation\n",[self()]),
 	State=[],
 	{ok,State}.
+
+% Cleanups after worker shutdown
 terminate(_State)->
 	io:format("~p starting termination\n",[self()]),
 	timer:sleep(1000),
 	io:format("~p finishing termination\n",[self()]),
 	ok.
 
+% Processess single evnt
 process_event(_State, Job) when Job == arith->
 	io:format("~p starting event ~p\n",[self(),Job]),
 	X=0,
@@ -72,6 +80,7 @@ process_event(State, Job)->
 	io:format("~p finishing event ~p\n",[self(),Job]),
 	{ok,State}.
 
+% Process single call
 process_call(_State, Job) when Job == arith->
 	io:format("~p starting event ~p\n",[self(),Job]),
 	X=0,
@@ -96,12 +105,6 @@ process_call(State, Job)->
 	timer:sleep(1000),
 	io:format("~p finishing call ~p\n",[self(),Job]),
 	{ok,[],State}.
-
-%%--------------------------------------------------------------------
-%% @doc
-%% @spec
-%% @end
-%%--------------------------------------------------------------------
 
 %%% Internal functions
 

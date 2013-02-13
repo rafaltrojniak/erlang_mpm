@@ -6,6 +6,10 @@
 %%% @end
 %%% Created :  wto sty 29 20:57:12 2013 by Rafał Trójniak
 %%%-------------------------------------------------------------------
+%%% TODO Timeout internal handling
+%%% TODO option scheduleAfterTimeout adding and implementation
+%%% TODO While rescheduling, keep in mind to use another worker
+%%% TODO Results refactor
 -module(erlang_mpm_server).
 
 -behaviour(gen_server).
@@ -46,6 +50,7 @@
 % Single job info
 -record(job, {
 		task,
+		type,
 		from=nil,
 		callTime=nil,
 		scheduled=0,
@@ -78,7 +83,7 @@ send_call(Pid, Task,  Timeout )
 send_event(Pid, Task )
 	when is_pid(Pid);
 		is_atom(Pid) ->
-	gen_server:cast(Pid, {new_cast, Task}).
+	gen_server:cast(Pid, {new_event, Task}).
 
 %% Worker reports its state
 report(Pid,starting)->
@@ -140,9 +145,9 @@ init([Supervisor, Options]) ->
 %%                                   {stop, Reason, State}
 handle_call({new_call, Task, CallTime, Timeout}, From, State) ->
 	QeueuMod=State#state.queueMod,
-	NewJob=#job{task=Task, from=From, callTime=CallTime, timeout=Timeout},
+	NewJob=#job{task=Task, type=call, from=From, callTime=CallTime, timeout=Timeout},
 	NewQueue=QeueuMod:in(NewJob,State#state.queue),
-	ManagedState=manageWorkers(trySchedule(State#state{queue=NewQueue}),
+	ManagedState=manageWorkers(trySchedule(State#state{queue=NewQueue})),
 	{noreply, ManagedState}.
 
 %% @spec handle_cast(Msg, State) -> {noreply, State} |
@@ -187,15 +192,8 @@ handle_cast({result, Pid, RetStatus, Result}, State) ->
 		{value, Worker, NewList} ->
 			% Send result
 			LastJob=Worker#worker.lastJob,
-			case RetStatus of
-				ok ->
-					gen_server:reply(LastJob#job.from, {ok,Result}),
-					handleFinishedJob(Worker, NewList, State);
-				error ->
-					% TODO reschedule
-					gen_server:reply(LastJob#job.from, {error,Result}),
-					handleFinishedJob(Worker, NewList, State)
-			end
+			gen_server:reply(LastJob#job.from, {RetStatus ,Result}),
+			handleFinishedJob(Worker, NewList, State)
 	end;
 handle_cast({report,finished,Pid}, State) ->
 	case lists:keytake(Pid, #worker.pid, State#state.busyWorkers) of
@@ -230,9 +228,9 @@ handle_cast(init, State) ->
 		lists:seq(1,State#state.startWorkers)),
 	ManagedState=manageWorkers(StartedState),
 	{noreply, ManagedState};
-handle_cast({new_cast, Task }, State) ->
+handle_cast({new_event, Task }, State) ->
 	QeueuMod=State#state.queueMod,
-	NewQueue=QeueuMod:in(#job{task=Task},State#state.queue),
+	NewQueue=QeueuMod:in(#job{task=Task, type=event}, State#state.queue),
 	ScheduledState=trySchedule(State#state{queue=NewQueue}),
 	ManagedState=manageWorkers(ScheduledState),
 	{noreply, ManagedState}.
@@ -264,10 +262,10 @@ trySchedule(State) ->
 					State;
 				[Worker| ReadyWorkers] ->
 					{{value,Job},Queue}=QueueMod:out(State#state.queue),
-					case Job#job.from of
-						nil ->
+					case Job#job.type of
+						event ->
 							erlang_mpm_worker:submit_event(Worker#worker.pid, Job#job.task);
-						_From ->
+						call ->
 							erlang_mpm_worker:submit_call(Worker#worker.pid, Job#job.task)
 					end,
 					BusyWorker=Worker#worker{lastJob=Job, jobStarted=now()},
